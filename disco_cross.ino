@@ -18,6 +18,11 @@ const int FADE_SPEED = 25; // How fast LEDs fade
 unsigned long lastBeatTime = 0;
 const unsigned long MIN_BEAT_INTERVAL = 150; // Longer minimum interval
 
+// Music detection
+const int MUSIC_THRESHOLD = 20; // Lower threshold for background music
+bool musicPlaying = false;
+int backgroundBrightness = 0;
+
 // Volume tracking
 float average = 0;
 int volumes[10] = {0}; // Shorter history for faster response
@@ -86,39 +91,54 @@ void loop() {
     }
     average = avgSum / 10;
     
+    // Music detection (background lighting)
+    if (volume > MUSIC_THRESHOLD) {
+      musicPlaying = true;
+      if (backgroundBrightness < 50) backgroundBrightness = 50; // Set background brightness
+    } else {
+      musicPlaying = false;
+      if (backgroundBrightness > 0) backgroundBrightness -= 5; // Fade out background
+      if (backgroundBrightness < 0) backgroundBrightness = 0;
+    }
+    
     // Beat detection: much more selective for bass beats
     bool volumeSpike = volume > (average * 2.0); // 100% above average (much higher)
     bool volumeJump = (volume - lastVolume) > 40; // Much larger sudden increase
     bool enoughTime = (millis() - lastBeatTime) > MIN_BEAT_INTERVAL;
     
-    if ((volumeSpike || volumeJump) && enoughTime) {
+    if ((volumeSpike || volumeJump) && enoughTime && musicPlaying) {
       // Beat detected! Flash with fade effect
       currentBrightness = 255; // Full brightness
       lastBeatTime = millis();
       
-      Serial.print("Beat! Volume: ");
-      Serial.print(volume);
-      Serial.print(" Avg: ");
-      Serial.print(average);
-      Serial.print(" Spike: ");
-      Serial.println(volumeSpike ? "YES" : "NO");
+      Serial.print("BEAT! Background: ");
+      Serial.print(backgroundBrightness);
+      Serial.print(" Beat: ");
+      Serial.println(currentBrightness);
     }
     
     lastVolume = volume;
     samplesRead = 0;
   }
   
-  // Fade effect - runs continuously
+  // Fade effect for beat flash - runs continuously
   if (currentBrightness > 0) {
     currentBrightness -= FADE_SPEED;
     if (currentBrightness < 0) currentBrightness = 0;
   }
   
-  // Set LED brightness
+  // Set LED brightness - background + beat flash
   for(int i = 0; i < NUM_LEDS; i++) {
-    strip.SetPixelColor(i, RgbColor(currentBrightness, 0, 0)); // Red with fade
+    int totalBrightness = backgroundBrightness + currentBrightness;
+    if (totalBrightness > 255) totalBrightness = 255; // Cap at max brightness
+    
+    if (totalBrightness > 0) {
+      strip.SetPixelColor(i, RgbColor(totalBrightness, 0, 0)); // Red with background + beat
+    } else {
+      strip.SetPixelColor(i, RgbColor(0, 0, 0)); // Off when no brightness
+    }
   }
   strip.Show();
   
-  delay(15); // Slightly faster for smoother fade
+  delay(10); // Faster for more responsive fade
 }
