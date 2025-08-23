@@ -12,17 +12,17 @@ NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> strip(NUM_LEDS, LED_PIN);
 short sampleBuffer[SAMPLE_BUFFER_SIZE];
 volatile int samplesRead;
 
-// Music reactivity
-const int BEAT_THRESHOLD = 50; // Much more sensitive for music
-const int FADE_SPEED = 30; // Faster fade for snappier response
+// Beat detection for electronic music
+const int BEAT_THRESHOLD = 80; // Much higher threshold
+const int FADE_SPEED = 25; // How fast LEDs fade
 unsigned long lastBeatTime = 0;
-const unsigned long MIN_BEAT_INTERVAL = 30; // Even faster response
+const unsigned long MIN_BEAT_INTERVAL = 150; // Longer minimum interval
 
-// Bass detection
+// Volume tracking
+float average = 0;
+int volumes[10] = {0}; // Shorter history for faster response
+int volumeIndex = 0;
 int lastVolume = 0;
-const int VOLUME_CHANGE_THRESHOLD = 20; // Detect sudden volume changes
-const int BASS_FREQ_MIN = 20;  // Minimum bass frequency (Hz)
-const int BASS_FREQ_MAX = 200; // Maximum bass frequency (Hz)
 
 // Current color for all LEDs
 int currentRed = 0;
@@ -65,78 +65,60 @@ void setup() {
 }
 
 void loop() {
-      if (samplesRead > 0) {
-      // Calculate bass energy using simple low-pass filter
-      long bassSum = 0;
-      int bassCount = 0;
-      
-      for (int i = 0; i < samplesRead; i++) {
-        // Simple low-pass filter to emphasize bass frequencies
-        // This approximates bass detection by averaging samples
-        if (i % 4 == 0) { // Take every 4th sample to focus on lower frequencies
-          bassSum += abs(sampleBuffer[i]);
-          bassCount++;
-        }
-      }
-      
-      int bassEnergy = bassCount > 0 ? bassSum / bassCount : 0;
-      
-      // Check for bass beat - detect both high bass energy and sudden changes
-      bool volumeBeat = bassEnergy > BEAT_THRESHOLD;
-      bool changeBeat = abs(bassEnergy - lastVolume) > VOLUME_CHANGE_THRESHOLD;
+  if (samplesRead > 0) {
+    // Calculate current volume
+    long sum = 0;
+    for (int i = 0; i < samplesRead; i++) {
+      sum += abs(sampleBuffer[i]);
+    }
+    int volume = sum / samplesRead;
     
-    // Check for beat
-    if ((volumeBeat || changeBeat) && millis() - lastBeatTime > MIN_BEAT_INTERVAL) {
-      // Beat detected! Flash all LEDs with current color
-      currentRed = colors[currentColorIndex][0];
-      currentGreen = colors[currentColorIndex][1];
-      currentBlue = colors[currentColorIndex][2];
+    // Update rolling average (shorter window for faster response)
+    for(int i = 9; i > 0; i--) {
+      volumes[i] = volumes[i - 1];
+    }
+    volumes[0] = volume;
+    
+    // Calculate average of last 10 samples
+    float avgSum = 0;
+    for(int i = 0; i < 10; i++) {
+      avgSum += volumes[i];
+    }
+    average = avgSum / 10;
+    
+    // Beat detection: much more selective for bass beats
+    bool volumeSpike = volume > (average * 2.0); // 100% above average (much higher)
+    bool volumeJump = (volume - lastVolume) > 40; // Much larger sudden increase
+    bool enoughTime = (millis() - lastBeatTime) > MIN_BEAT_INTERVAL;
+    
+    if ((volumeSpike || volumeJump) && enoughTime) {
+      // Beat detected! Flash with fade effect
       currentBrightness = 255; // Full brightness
-      
-      beatCount++;
-      
-      // Check if it's time to change color (independent of flash)
-      if (beatCount >= beatsUntilColorChange) {
-        beatCount = 0;
-        currentColorIndex = (currentColorIndex + 1) % 5;
-        // Randomize next color change interval (between 4 and 12 beats)
-        beatsUntilColorChange = random(4, 13);
-        Serial.print("Color changed to: ");
-        Serial.println(currentColorIndex);
-      }
-      
       lastBeatTime = millis();
       
-      Serial.print("Bass! Energy: ");
-      Serial.print(bassEnergy);
-      Serial.print(" Color: ");
-      Serial.print(currentColorIndex);
-      Serial.print(" Beat count: ");
-      Serial.print(beatCount);
-      Serial.print("/");
-      Serial.println(beatsUntilColorChange);
+      Serial.print("Beat! Volume: ");
+      Serial.print(volume);
+      Serial.print(" Avg: ");
+      Serial.print(average);
+      Serial.print(" Spike: ");
+      Serial.println(volumeSpike ? "YES" : "NO");
     }
     
-          lastVolume = bassEnergy;
-    
-    // Fade brightness
-    if (currentBrightness > 0) {
-      currentBrightness -= FADE_SPEED;
-      if (currentBrightness < 0) currentBrightness = 0;
-    }
-    
-    // Set all LEDs to same color with fade effect
-    int red = (currentRed * currentBrightness) / 255;
-    int green = (currentGreen * currentBrightness) / 255;
-    int blue = (currentBlue * currentBrightness) / 255;
-    
-    for(int i = 0; i < NUM_LEDS; i++) {
-      strip.SetPixelColor(i, RgbColor(red, green, blue));
-    }
-    
-    strip.Show();
+    lastVolume = volume;
     samplesRead = 0;
   }
   
-  delay(20); // Slightly longer delay for smoother animation
+  // Fade effect - runs continuously
+  if (currentBrightness > 0) {
+    currentBrightness -= FADE_SPEED;
+    if (currentBrightness < 0) currentBrightness = 0;
+  }
+  
+  // Set LED brightness
+  for(int i = 0; i < NUM_LEDS; i++) {
+    strip.SetPixelColor(i, RgbColor(currentBrightness, 0, 0)); // Red with fade
+  }
+  strip.Show();
+  
+  delay(15); // Slightly faster for smoother fade
 }
