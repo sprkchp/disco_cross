@@ -13,15 +13,26 @@ short sampleBuffer[SAMPLE_BUFFER_SIZE];
 volatile int samplesRead;
 
 // Beat detection for electronic music
-const int BEAT_THRESHOLD = 80; // Much higher threshold
-const int FADE_SPEED = 25; // How fast LEDs fade
+const int BEAT_THRESHOLD = 60; // Lower threshold for electronic music
+const int FADE_SPEED = 30; // Slightly faster fade for punchy electronic beats
 unsigned long lastBeatTime = 0;
-const unsigned long MIN_BEAT_INTERVAL = 150; // Longer minimum interval
+const unsigned long MIN_BEAT_INTERVAL = 100; // Shorter interval for faster electronic music
 
-// Music detection
+// Music detection and equalizer-style system
 const int MUSIC_THRESHOLD = 20; // Lower threshold for background music
 bool musicPlaying = false;
 int backgroundBrightness = 0;
+int maxBackgroundBrightness = 100; // Maximum background brightness
+
+// Electronic music bass detection (60-120 Hz range)
+const int BASS_SAMPLE_RATE = 16000;
+const int BASS_FREQ_MIN = 60;  // 60 Hz - kick drum territory
+const int BASS_FREQ_MAX = 120; // 120 Hz - upper bass, electronic music focus
+
+// Color management - beat-driven
+int currentColorIndex = 0;
+int beatCount = 0;
+int beatsUntilColorChange = 0; // Random number of beats until next color change
 
 // Volume tracking
 float average = 0;
@@ -44,9 +55,7 @@ int colors[5][3] = {
   {255, 255, 0}   // Yellow
 };
 
-int currentColorIndex = 0;
-int beatCount = 0;
-int beatsUntilColorChange = 8; // Start with 8 beats
+
 
 void onPDMdata() {
   int bytesAvailable = PDM.available();
@@ -91,19 +100,36 @@ void loop() {
     }
     average = avgSum / 10;
     
-    // Music detection (background lighting)
+    // Equalizer-style music detection (overall volume controls brightness)
     if (volume > MUSIC_THRESHOLD) {
       musicPlaying = true;
-      if (backgroundBrightness < 50) backgroundBrightness = 50; // Set background brightness
+      // Map volume to background brightness (like an equalizer)
+      backgroundBrightness = map(volume, MUSIC_THRESHOLD, 200, 20, maxBackgroundBrightness);
+      if (backgroundBrightness > maxBackgroundBrightness) backgroundBrightness = maxBackgroundBrightness;
     } else {
       musicPlaying = false;
       if (backgroundBrightness > 0) backgroundBrightness -= 5; // Fade out background
       if (backgroundBrightness < 0) backgroundBrightness = 0;
     }
     
-    // Beat detection: much more selective for bass beats
-    bool volumeSpike = volume > (average * 2.0); // 100% above average (much higher)
-    bool volumeJump = (volume - lastVolume) > 40; // Much larger sudden increase
+    // Color change (beat-driven)
+    if (beatCount >= beatsUntilColorChange) {
+      currentColorIndex = random(5); // Random color from 0-4
+      beatCount = 0;
+      
+      // Set random number of beats until next change (3-8 beats)
+      beatsUntilColorChange = random(3, 9);
+      
+      Serial.print("Color changed to: ");
+      Serial.print(currentColorIndex);
+      Serial.print(" Next change in: ");
+      Serial.print(beatsUntilColorChange);
+      Serial.println(" beats");
+    }
+    
+    // Electronic music bass beat detection
+    bool volumeSpike = volume > (average * 1.8); // 80% above average (electronic music is punchy)
+    bool volumeJump = (volume - lastVolume) > 30; // Sudden increase (electronic bass hits are sharp)
     bool enoughTime = (millis() - lastBeatTime) > MIN_BEAT_INTERVAL;
     
     if ((volumeSpike || volumeJump) && enoughTime && musicPlaying) {
@@ -111,10 +137,16 @@ void loop() {
       currentBrightness = 255; // Full brightness
       lastBeatTime = millis();
       
-      Serial.print("BEAT! Background: ");
+      beatCount++; // Increment beat counter for color changes
+      
+      Serial.print("BEAT! Volume: ");
+      Serial.print(volume);
+      Serial.print(" Background: ");
       Serial.print(backgroundBrightness);
       Serial.print(" Beat: ");
-      Serial.println(currentBrightness);
+      Serial.print(currentBrightness);
+      Serial.print(" Beat count: ");
+      Serial.println(beatCount);
     }
     
     lastVolume = volume;
@@ -127,13 +159,18 @@ void loop() {
     if (currentBrightness < 0) currentBrightness = 0;
   }
   
-  // Set LED brightness - background + beat flash
+  // Set LED brightness - background + beat flash with colors
   for(int i = 0; i < NUM_LEDS; i++) {
     int totalBrightness = backgroundBrightness + currentBrightness;
     if (totalBrightness > 255) totalBrightness = 255; // Cap at max brightness
     
     if (totalBrightness > 0) {
-      strip.SetPixelColor(i, RgbColor(totalBrightness, 0, 0)); // Red with background + beat
+      // Apply color with brightness
+      int red = (colors[currentColorIndex][0] * totalBrightness) / 255;
+      int green = (colors[currentColorIndex][1] * totalBrightness) / 255;
+      int blue = (colors[currentColorIndex][2] * totalBrightness) / 255;
+      
+      strip.SetPixelColor(i, RgbColor(red, green, blue));
     } else {
       strip.SetPixelColor(i, RgbColor(0, 0, 0)); // Off when no brightness
     }
