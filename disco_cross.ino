@@ -18,9 +18,11 @@ const int FADE_SPEED = 30; // Faster fade for snappier response
 unsigned long lastBeatTime = 0;
 const unsigned long MIN_BEAT_INTERVAL = 30; // Even faster response
 
-// Audio processing for better beat detection
+// Bass detection
 int lastVolume = 0;
 const int VOLUME_CHANGE_THRESHOLD = 20; // Detect sudden volume changes
+const int BASS_FREQ_MIN = 20;  // Minimum bass frequency (Hz)
+const int BASS_FREQ_MAX = 200; // Maximum bass frequency (Hz)
 
 // Current color for all LEDs
 int currentRed = 0;
@@ -39,6 +41,7 @@ int colors[5][3] = {
 
 int currentColorIndex = 0;
 int beatCount = 0;
+int beatsUntilColorChange = 8; // Start with 8 beats
 
 void onPDMdata() {
   int bytesAvailable = PDM.available();
@@ -62,18 +65,27 @@ void setup() {
 }
 
 void loop() {
-  if (samplesRead > 0) {
-    // Calculate average volume
-    long sum = 0;
-    for (int i = 0; i < samplesRead; i++) {
-      sum += abs(sampleBuffer[i]);
-    }
-    int averageVolume = sum / samplesRead;
+      if (samplesRead > 0) {
+      // Calculate bass energy using simple low-pass filter
+      long bassSum = 0;
+      int bassCount = 0;
+      
+      for (int i = 0; i < samplesRead; i++) {
+        // Simple low-pass filter to emphasize bass frequencies
+        // This approximates bass detection by averaging samples
+        if (i % 4 == 0) { // Take every 4th sample to focus on lower frequencies
+          bassSum += abs(sampleBuffer[i]);
+          bassCount++;
+        }
+      }
+      
+      int bassEnergy = bassCount > 0 ? bassSum / bassCount : 0;
+      
+      // Check for bass beat - detect both high bass energy and sudden changes
+      bool volumeBeat = bassEnergy > BEAT_THRESHOLD;
+      bool changeBeat = abs(bassEnergy - lastVolume) > VOLUME_CHANGE_THRESHOLD;
     
-    // Check for beat - detect both high volume and sudden volume changes
-    bool volumeBeat = averageVolume > BEAT_THRESHOLD;
-    bool changeBeat = abs(averageVolume - lastVolume) > VOLUME_CHANGE_THRESHOLD;
-    
+    // Check for beat
     if ((volumeBeat || changeBeat) && millis() - lastBeatTime > MIN_BEAT_INTERVAL) {
       // Beat detected! Flash all LEDs with current color
       currentRed = colors[currentColorIndex][0];
@@ -83,38 +95,29 @@ void loop() {
       
       beatCount++;
       
-      // Shuffle colors every 8 beats
-      if (beatCount >= 8) {
-        // Shuffle the color array
-        for (int i = 0; i < 5; i++) {
-          int randomIndex = random(5);
-          // Swap colors[i] with colors[randomIndex]
-          int tempR = colors[i][0];
-          int tempG = colors[i][1];
-          int tempB = colors[i][2];
-          colors[i][0] = colors[randomIndex][0];
-          colors[i][1] = colors[randomIndex][1];
-          colors[i][2] = colors[randomIndex][2];
-          colors[randomIndex][0] = tempR;
-          colors[randomIndex][1] = tempG;
-          colors[randomIndex][2] = tempB;
-        }
+      // Check if it's time to change color (independent of flash)
+      if (beatCount >= beatsUntilColorChange) {
         beatCount = 0;
-        currentColorIndex = 0;
-      } else {
-        // Move to next color
         currentColorIndex = (currentColorIndex + 1) % 5;
+        // Randomize next color change interval (between 4 and 12 beats)
+        beatsUntilColorChange = random(4, 13);
+        Serial.print("Color changed to: ");
+        Serial.println(currentColorIndex);
       }
       
       lastBeatTime = millis();
       
-      Serial.print("Beat! Color: ");
+      Serial.print("Bass! Energy: ");
+      Serial.print(bassEnergy);
+      Serial.print(" Color: ");
       Serial.print(currentColorIndex);
       Serial.print(" Beat count: ");
-      Serial.println(beatCount);
+      Serial.print(beatCount);
+      Serial.print("/");
+      Serial.println(beatsUntilColorChange);
     }
     
-    lastVolume = averageVolume;
+          lastVolume = bassEnergy;
     
     // Fade brightness
     if (currentBrightness > 0) {
