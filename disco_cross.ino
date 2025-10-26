@@ -2,7 +2,7 @@
 #include <PDM.h>
 
 #define LED_PIN     5
-#define NUM_LEDS    16
+#define NUM_LEDS    11
 #define SAMPLE_RATE 16000
 #define SAMPLE_BUFFER_SIZE 512
 
